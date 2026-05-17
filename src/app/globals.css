@@ -1,0 +1,24 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ivory: #FFF8F5;
+  --color-blush: #F8D7DA;
+  --color-lavender: #E6D6F5;
+  --color-blossom: #F2C6CC;
+  --color-gold: #C9A24E;
+  --color-primary: #2B2B2B;
+  --color-secondary: #6E6E6E;
+
+  --font-heading: var(--font-heading);
+  --font-body: var(--font-body);
+}
+
+@layer base {
+  body {
+    background-color: var(--color-ivory);
+    color: var(--color-primary);
+    -webkit-font-smoothing: antialiased;
+    scroll-behavior: smooth;
+  }
+}
+
