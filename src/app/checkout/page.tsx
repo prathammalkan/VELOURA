@@ -8,7 +8,8 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { motion } from 'framer-motion';
 
-const GPAY_QR_URL = 'https://zyjqhivvmiowuzefvqpx.supabase.co/storage/v1/object/public/assets/gpay-qr.png';
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://atuvmtytvdmszulzxmzp.supabase.co';
+const GPAY_QR_URL = `${supabaseUrl}/storage/v1/object/public/assets/gpay-qr.png`;
 
 export default function Checkout() {
   const [step, setStep] = useState(1);
