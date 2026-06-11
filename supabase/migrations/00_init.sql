@@ -60,7 +60,8 @@ ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Users can view own orders" ON public.orders;
 CREATE POLICY "Users can view own orders" ON public.orders FOR SELECT
-  USING (auth.uid() = user_id OR EXISTS (SELECT 1 FROM public.users WHERE users.id = auth.uid() AND users.is_admin = true));
+  USING (auth.uid() = user_id OR user_id IS NULL OR EXISTS (SELECT 1 FROM public.users WHERE users.id = auth.uid() AND users.is_admin = true));
+
 
 DROP POLICY IF EXISTS "Users can insert own orders" ON public.orders;
 CREATE POLICY "Users can insert own orders" ON public.orders FOR INSERT

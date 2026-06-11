@@ -126,10 +126,10 @@ export const useOrderStore = create<OrderStore>((set, get) => ({
     }
   },
   createOrder: async (orderData) => {
-    const { user } = useAuthStore.getState();
+    const { user, session } = useAuthStore.getState();
     const payload = {
       ...orderData,
-      user_id: user?.id || null,
+      user_id: session ? (user?.id || null) : null,
       status: 'Pending Verification'
     };
     const { data, error } = await supabase.from('orders').insert(payload).select().single();
