@@ -29,38 +29,20 @@ export default function Checkout() {
     setLoading(true);
 
     try {
-      const res = await fetch('/api/orders', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.access_token || ''}`
-        },
-        body: JSON.stringify({
-          items: items.map(i => ({ product_id: i.id, quantity: i.quantity })),
-          shipping: details,
-          total_amount: total
-        })
-      });
+      // 1. Create the order
+      const { data: orderData, error: orderError } = await createOrder({ total, items, payment_status: 'Pending' });
+      if (orderError || !orderData) throw new Error(orderError || 'Failed to create order');
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Order failed');
-
-      const oid = data.order_id;
+      const oid = orderData.id;
       setOrderId(oid);
 
-      // Upload payment screenshot if provided
+      // 2. Upload payment screenshot if provided
       if (file) {
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('order_id', oid);
-        await fetch('/api/upload', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${session?.access_token || ''}` },
-          body: formData
-        });
+        const { uploadImage } = await import('@/lib/supabase/storage');
+        // Optional: you can attach this URL to the order if you add a receipt_url column later
+        await uploadImage(file);
       }
 
-      createOrder({ id: oid, total, status: 'Pending Verification', date: new Date().toLocaleDateString(), items });
       clearCart();
       setStep(3);
     } catch (e: any) {
@@ -70,14 +52,7 @@ export default function Checkout() {
     }
   };
 
-  // Fallback for mock mode (no Supabase keys)
-  const handleMockOrder = () => {
-    const id = 'VL' + Math.floor(100000 + Math.random() * 900000);
-    setOrderId(id);
-    createOrder({ id, total, status: 'Pending Verification', date: new Date().toLocaleDateString(), items });
-    clearCart();
-    setStep(3);
-  };
+  const handleMockOrder = handleCreateOrder; // both do the same thing now!
 
   if (items.length === 0 && step === 1) {
     return (

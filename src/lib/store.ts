@@ -1,9 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { products as defaultProducts } from './data';
 import { supabase } from './supabase/client';
 
-type CartItem = { id: string; name: string; price: number; quantity: number };
+type CartItem = { id: string; name: string; price: number; quantity: number; image?: string };
 
 interface CartStore {
   items: CartItem[];
@@ -66,7 +65,6 @@ export const useAuthStore = create<AuthStore>((set) => ({
   login: async (email, password) => {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return { error: error.message };
-    // Fetch profile from users table
     const { data: profile } = await supabase.from('users').select('*').eq('id', data.user.id).single();
     set({ user: profile || { id: data.user.id, email, name: email }, session: data.session });
     return { error: null };
@@ -75,7 +73,6 @@ export const useAuthStore = create<AuthStore>((set) => ({
     const { data, error } = await supabase.auth.signUp({ email, password });
     if (error) return { error: error.message };
     if (data.user) {
-      // Create profile in users table
       await supabase.from('users').insert({ id: data.user.id, name, email });
       set({ user: { id: data.user.id, name, email }, session: data.session });
     }
@@ -98,26 +95,97 @@ export const useAuthStore = create<AuthStore>((set) => ({
 
 interface OrderStore {
   orders: any[];
-  createOrder: (order: any) => void;
-  updateOrderStatus: (id: string, status: string) => void;
+  loading: boolean;
+  fetchOrders: () => Promise<void>;
+  createOrder: (orderData: { total: number, items: any[], payment_status?: string }) => Promise<{ data?: any, error?: string }>;
+  updateOrderStatus: (id: string, status: string) => Promise<void>;
 }
 
-export const useOrderStore = create<OrderStore>((set) => ({
+export const useOrderStore = create<OrderStore>((set, get) => ({
   orders: [],
-  createOrder: (order) => set((state) => ({ orders: [order, ...state.orders] })),
-  updateOrderStatus: (id, status) => set((state) => ({ orders: state.orders.map(o => o.id === id ? { ...o, status } : o) }))
+  loading: false,
+  fetchOrders: async () => {
+    set({ loading: true });
+    const { user } = useAuthStore.getState();
+    let query = supabase.from('orders').select('*').order('created_at', { ascending: false });
+    
+    // If not admin, only fetch own orders
+    if (!user?.is_admin) {
+      if (!user) {
+        set({ orders: [], loading: false });
+        return;
+      }
+      query = query.eq('user_id', user.id);
+    }
+    
+    const { data, error } = await query;
+    if (!error && data) {
+      set({ orders: data, loading: false });
+    } else {
+      set({ loading: false });
+    }
+  },
+  createOrder: async (orderData) => {
+    const { user } = useAuthStore.getState();
+    const payload = {
+      ...orderData,
+      user_id: user?.id || null,
+      status: 'Pending Verification'
+    };
+    const { data, error } = await supabase.from('orders').insert(payload).select().single();
+    if (!error && data) {
+      set((state) => ({ orders: [data, ...state.orders] }));
+      return { data };
+    }
+    return { error: error?.message || 'Failed to create order' };
+  },
+  updateOrderStatus: async (id, status) => {
+    const { error } = await supabase.from('orders').update({ status }).eq('id', id);
+    if (!error) {
+      set((state) => ({ orders: state.orders.map(o => o.id === id ? { ...o, status } : o) }));
+    }
+  }
 }));
 
 interface ProductStore {
   products: any[];
-  addProduct: (product: any) => void;
-  updateProduct: (id: string, updates: any) => void;
-  deleteProduct: (id: string) => void;
+  loading: boolean;
+  fetchProducts: () => Promise<void>;
+  addProduct: (product: any) => Promise<{ data?: any, error?: string }>;
+  updateProduct: (id: string, updates: any) => Promise<void>;
+  deleteProduct: (id: string) => Promise<void>;
 }
 
-export const useProductStore = create<ProductStore>()((set) => ({
-  products: defaultProducts,
-  addProduct: (product) => set((state) => ({ products: [product, ...state.products] })),
-  updateProduct: (id, updates) => set((state) => ({ products: state.products.map(p => p.id === id ? { ...p, ...updates } : p) })),
-  deleteProduct: (id) => set((state) => ({ products: state.products.filter(p => p.id !== id) }))
+export const useProductStore = create<ProductStore>((set) => ({
+  products: [],
+  loading: false,
+  fetchProducts: async () => {
+    set({ loading: true });
+    const { data, error } = await supabase.from('products').select('*').order('created_at', { ascending: false });
+    if (!error && data) {
+      set({ products: data, loading: false });
+    } else {
+      set({ loading: false });
+    }
+  },
+  addProduct: async (product) => {
+    const { data, error } = await supabase.from('products').insert(product).select().single();
+    if (!error && data) {
+      set((state) => ({ products: [data, ...state.products] }));
+      return { data };
+    }
+    return { error: error?.message || 'Failed to add product' };
+  },
+  updateProduct: async (id, updates) => {
+    const { data, error } = await supabase.from('products').update(updates).eq('id', id).select().single();
+    if (!error && data) {
+      set((state) => ({ products: state.products.map(p => p.id === id ? data : p) }));
+    }
+  },
+  deleteProduct: async (id) => {
+    const { error } = await supabase.from('products').delete().eq('id', id);
+    if (!error) {
+      set((state) => ({ products: state.products.filter(p => p.id !== id) }));
+    }
+  }
 }));

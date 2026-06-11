@@ -1,57 +1,89 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Section from '@/components/ui/Section';
 import Input from '@/components/ui/Input';
 import Button from '@/components/ui/Button';
-import { useOrderStore, useProductStore } from '@/lib/store';
+import { useOrderStore, useProductStore, useAuthStore } from '@/lib/store';
+import { uploadImage } from '@/lib/supabase/storage';
 import Image from 'next/image';
-
-const ADMIN_ID = process.env.NEXT_PUBLIC_ADMIN_ID || 'admin';
-const ADMIN_PASSWORD = process.env.NEXT_PUBLIC_ADMIN_PASSWORD || 'admin';
 
 export default function Admin() {
   // Auth state
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const { user, login, logout, loading: authLoading } = useAuthStore();
   const [loginId, setLoginId] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   // Admin state
   const [activeTab, setActiveTab] = useState('dashboard');
-  const { orders, updateOrderStatus } = useOrderStore();
-  const { products, addProduct, updateProduct, deleteProduct } = useProductStore();
+  const { orders, fetchOrders, updateOrderStatus, loading: ordersLoading } = useOrderStore();
+  const { products, addProduct, updateProduct, deleteProduct, fetchProducts, loading: productsLoading } = useProductStore();
 
   // New product form
   const [newProduct, setNewProduct] = useState({ name: '', price: '', category: '', description: '', image: '' });
+  const [newImageFile, setNewImageFile] = useState<File | null>(null);
+  const [isAdding, setIsAdding] = useState(false);
 
   // Edit product state
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({ name: '', price: '', category: '', description: '', image: '' });
+  const [editImageFile, setEditImageFile] = useState<File | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const editFileInputRef = useRef<HTMLInputElement>(null);
 
-  // Page images state
-  const [heroImage, setHeroImage] = useState('https://images.unsplash.com/photo-1617038260897-41a1f14a8ca0?w=1600&q=85');
-  const [bannerSaved, setBannerSaved] = useState(false);
+  // Fetch data if admin
+  useEffect(() => {
+    if (user?.is_admin) {
+      fetchOrders();
+      fetchProducts();
+    }
+  }, [user]);
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     setLoginError('');
-    if (loginId === ADMIN_ID && loginPassword === ADMIN_PASSWORD) {
-      setIsAuthenticated(true);
+    setIsLoggingIn(true);
+    const { error } = await login(loginId, loginPassword);
+    setIsLoggingIn(false);
+    if (error) {
+      setLoginError(error);
     } else {
-      setLoginError('Invalid Admin ID or Password.');
+      const currentUser = useAuthStore.getState().user;
+      if (!currentUser?.is_admin) {
+        setLoginError('Unauthorized. You do not have admin privileges.');
+        logout();
+      }
     }
   };
 
-  const handleAddProduct = () => {
+  const handleAddProduct = async () => {
     if (!newProduct.name || !newProduct.price) return;
-    addProduct({
-      id: Date.now().toString(),
+    setIsAdding(true);
+    
+    let imageUrl = newProduct.image;
+    if (newImageFile) {
+      const { url, error } = await uploadImage(newImageFile);
+      if (error) {
+        alert('Image upload failed: ' + error);
+        setIsAdding(false);
+        return;
+      }
+      if (url) imageUrl = url;
+    }
+
+    await addProduct({
       name: newProduct.name,
       price: Number(newProduct.price),
       category: newProduct.category || 'Uncategorized',
       description: newProduct.description || '',
-      image: newProduct.image || ''
+      image: imageUrl || ''
     });
+    
     setNewProduct({ name: '', price: '', category: '', description: '', image: '' });
+    setNewImageFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    setIsAdding(false);
   };
 
   const handleStartEdit = (product: any) => {
@@ -63,21 +95,37 @@ export default function Admin() {
       description: product.description || '',
       image: product.image || ''
     });
+    setEditImageFile(null);
   };
 
-  const handleSaveEdit = (id: string) => {
-    updateProduct(id, {
+  const handleSaveEdit = async (id: string) => {
+    setIsSaving(true);
+    let imageUrl = editForm.image;
+    if (editImageFile) {
+      const { url, error } = await uploadImage(editImageFile);
+      if (error) {
+        alert('Image upload failed: ' + error);
+        setIsSaving(false);
+        return;
+      }
+      if (url) imageUrl = url;
+    }
+
+    await updateProduct(id, {
       name: editForm.name,
       price: Number(editForm.price),
       category: editForm.category,
       description: editForm.description,
-      image: editForm.image
+      image: imageUrl
     });
     setEditingId(null);
+    setIsSaving(false);
   };
 
+  if (authLoading) return <Section className="py-16 text-center"><p>Loading...</p></Section>;
+
   // ─── Login Screen ───
-  if (!isAuthenticated) {
+  if (!user || !user.is_admin) {
     return (
       <Section className="py-16">
         <div className='max-w-md mx-auto bg-white p-10 rounded-2xl border border-blush/30 shadow-sm'>
@@ -87,7 +135,7 @@ export default function Admin() {
           {loginError && <p className="text-red-500 text-sm mb-4 text-center bg-red-50 p-3 rounded-xl">{loginError}</p>}
 
           <Input
-            placeholder='Admin ID'
+            placeholder='Email Address'
             value={loginId}
             onChange={(e: any) => setLoginId(e.target.value)}
             className='mb-4'
@@ -99,7 +147,9 @@ export default function Admin() {
             onChange={(e: any) => setLoginPassword(e.target.value)}
             className='mb-6'
           />
-          <Button className='w-full' onClick={handleLogin}>Login</Button>
+          <Button className='w-full' onClick={handleLogin} disabled={isLoggingIn}>
+            {isLoggingIn ? 'Verifying...' : 'Login'}
+          </Button>
         </div>
       </Section>
     );
@@ -117,10 +167,7 @@ export default function Admin() {
               <button onClick={() => setActiveTab('dashboard')} className={`text-left px-4 py-3 rounded-xl transition-colors ${activeTab === 'dashboard' ? 'bg-gold text-white' : 'hover:bg-blush/20 text-secondary'}`}>Overview</button>
               <button onClick={() => setActiveTab('orders')} className={`text-left px-4 py-3 rounded-xl transition-colors ${activeTab === 'orders' ? 'bg-gold text-white' : 'hover:bg-blush/20 text-secondary'}`}>Manage Orders</button>
               <button onClick={() => setActiveTab('products')} className={`text-left px-4 py-3 rounded-xl transition-colors ${activeTab === 'products' ? 'bg-gold text-white' : 'hover:bg-blush/20 text-secondary'}`}>Inventory</button>
-              <button onClick={() => setActiveTab('pages')} className={`text-left px-4 py-3 rounded-xl transition-colors ${activeTab === 'pages' ? 'bg-gold text-white' : 'hover:bg-blush/20 text-secondary'}`}>Page Images</button>
-              <button onClick={() => setActiveTab('customers')} className={`text-left px-4 py-3 rounded-xl transition-colors ${activeTab === 'customers' ? 'bg-gold text-white' : 'hover:bg-blush/20 text-secondary'}`}>Customers</button>
-              <button onClick={() => setActiveTab('settings')} className={`text-left px-4 py-3 rounded-xl transition-colors ${activeTab === 'settings' ? 'bg-gold text-white' : 'hover:bg-blush/20 text-secondary'}`}>Settings</button>
-              <button onClick={() => setIsAuthenticated(false)} className="text-left px-4 py-3 rounded-xl transition-colors text-red-400 hover:bg-red-50 mt-4">Logout</button>
+              <button onClick={() => logout()} className="text-left px-4 py-3 rounded-xl transition-colors text-red-400 hover:bg-red-50 mt-4">Logout</button>
             </div>
           </div>
         </div>
@@ -152,14 +199,22 @@ export default function Admin() {
           {activeTab === 'orders' && (
             <div>
               <h3 className='font-heading text-2xl mb-6'>Manage Orders</h3>
-              {orders.length === 0 ? <p className='text-secondary'>No orders yet.</p> : (
+              {ordersLoading ? <p>Loading orders...</p> : orders.length === 0 ? <p className='text-secondary'>No orders yet.</p> : (
                 <div className='flex flex-col gap-4'>
                   {orders.map(o => (
                     <div key={o.id} className='bg-white border border-pink-50 p-6 rounded-[16px] flex flex-col md:flex-row justify-between items-start md:items-center shadow-sm gap-4 hover:shadow-md transition-shadow'>
                       <div>
-                        <p className='font-bold text-lg text-primary'>Order #{o.id}</p>
-                        <p className='text-secondary text-sm'>{o.date} | ₹{o.total}</p>
-                        <p className='text-xs mt-2 text-gold font-medium cursor-pointer hover:underline'>View Payment Screenshot</p>
+                        <p className='font-bold text-lg text-primary'>Order #{o.id.split('-')[0]}</p>
+                        <p className='text-secondary text-sm'>{new Date(o.created_at).toLocaleDateString()} | ₹{o.total}</p>
+                        <p className='text-xs mt-2 text-secondary'>User: {o.user_id || 'Guest'}</p>
+                        <div className='mt-3'>
+                          <p className='text-sm font-medium'>Items:</p>
+                          <ul className='text-xs text-secondary list-disc pl-4'>
+                            {(o.items || []).map((i: any, idx: number) => (
+                              <li key={idx}>{i.quantity}x {i.name}</li>
+                            ))}
+                          </ul>
+                        </div>
                       </div>
                       <div className='flex items-center gap-4'>
                         <select value={o.status} onChange={(e) => updateOrderStatus(o.id, e.target.value)} className='bg-ivory border border-pink-100 rounded-[8px] px-3 py-2 text-sm focus:outline-none focus:border-gold'>
@@ -186,121 +241,72 @@ export default function Admin() {
                   <Input placeholder='Price (₹)' type='number' value={newProduct.price} onChange={(e: any) => setNewProduct({ ...newProduct, price: e.target.value })} className="w-32" />
                   <Input placeholder='Category' value={newProduct.category} onChange={(e: any) => setNewProduct({ ...newProduct, category: e.target.value })} className="w-48" />
                 </div>
-                <Input placeholder='Image URL' value={newProduct.image} onChange={(e: any) => setNewProduct({ ...newProduct, image: e.target.value })} />
+                <div className="flex gap-4 items-center">
+                  <Input placeholder='Image URL (or upload below)' value={newProduct.image} onChange={(e: any) => setNewProduct({ ...newProduct, image: e.target.value })} className="flex-1" />
+                  <span className="text-secondary text-sm">OR</span>
+                  <input type="file" accept="image/*" ref={fileInputRef} onChange={(e) => setNewImageFile(e.target.files?.[0] || null)} className="text-sm text-secondary file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blush/20 file:text-primary hover:file:bg-blush/30" />
+                </div>
                 <textarea
                   placeholder='Product description...'
                   value={newProduct.description}
                   onChange={(e) => setNewProduct({ ...newProduct, description: e.target.value })}
                   className='w-full bg-ivory border border-pink-100 rounded-[12px] px-4 py-3 text-primary placeholder-secondary/50 focus:outline-none focus:border-gold resize-none h-24'
                 />
-                <Button onClick={handleAddProduct} className='self-end'>Add Product</Button>
+                <Button onClick={handleAddProduct} className='self-end' disabled={isAdding}>{isAdding ? 'Adding...' : 'Add Product'}</Button>
               </div>
 
               <h3 className='font-heading text-2xl mb-6'>Inventory</h3>
-              <div className='flex flex-col gap-4'>
-                {products.map(p => (
-                  <div key={p.id} className='bg-white border border-pink-50 p-6 rounded-[16px] shadow-sm hover:shadow-md transition-shadow'>
-                    {editingId === p.id ? (
-                      /* ── Editing Mode ── */
-                      <div className='flex flex-col gap-4'>
-                        <div className='flex flex-col md:flex-row gap-4'>
-                          <Input placeholder='Name' value={editForm.name} onChange={(e: any) => setEditForm({ ...editForm, name: e.target.value })} className="flex-1" />
-                          <Input placeholder='Price' type='number' value={editForm.price} onChange={(e: any) => setEditForm({ ...editForm, price: e.target.value })} className="w-32" />
-                          <Input placeholder='Category' value={editForm.category} onChange={(e: any) => setEditForm({ ...editForm, category: e.target.value })} className="w-48" />
-                        </div>
-                        <Input placeholder='Image URL' value={editForm.image} onChange={(e: any) => setEditForm({ ...editForm, image: e.target.value })} />
-                        <textarea
-                          placeholder='Description...'
-                          value={editForm.description}
-                          onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
-                          className='w-full bg-ivory border border-pink-100 rounded-[12px] px-4 py-3 text-primary placeholder-secondary/50 focus:outline-none focus:border-gold resize-none h-24'
-                        />
-                        <div className='flex gap-3 justify-end'>
-                          <Button variant='secondary' onClick={() => setEditingId(null)}>Cancel</Button>
-                          <Button onClick={() => handleSaveEdit(p.id)}>Save</Button>
-                        </div>
-                      </div>
-                    ) : (
-                      /* ── View Mode ── */
-                      <div className='flex flex-col md:flex-row justify-between items-start md:items-center gap-4'>
-                        <div className="flex items-center gap-4">
-                          <div className="w-16 h-16 rounded-lg overflow-hidden relative flex-shrink-0 bg-blush/20">
-                            {p.image && <Image src={p.image} alt={p.name} fill className="object-cover" sizes="64px" />}
-                          </div>
-                          <div>
-                            <p className='font-bold text-lg text-primary'>{p.name}</p>
-                            <p className='text-secondary text-sm'>₹{p.price} | {p.category}</p>
-                            {p.description && <p className='text-secondary/70 text-xs mt-1 max-w-md truncate'>{p.description}</p>}
-                          </div>
-                        </div>
-                        <div className='flex gap-3'>
-                          <button onClick={() => handleStartEdit(p)} className='text-gold hover:text-gold/80 transition-colors bg-gold/10 px-4 py-2 rounded-lg text-sm font-medium'>Edit</button>
-                          <button onClick={() => deleteProduct(p.id)} className='text-red-400 hover:text-red-600 transition-colors bg-red-50 px-4 py-2 rounded-lg text-sm font-medium'>Delete</button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* ─── Page Images ─── */}
-          {activeTab === 'pages' && (
-            <div>
-              <h3 className='font-heading text-2xl mb-6'>Page Images</h3>
-              <p className='text-secondary mb-8'>Manage the hero and banner images across the website.</p>
-
-              <div className='bg-white p-6 rounded-2xl border border-blush/30 shadow-sm mb-8'>
-                <h4 className='font-heading text-lg mb-4 text-primary'>Homepage Hero Image</h4>
-                <div className='flex flex-col md:flex-row gap-6 items-start'>
-                  <div className='w-full md:w-1/3 aspect-video bg-blush/20 rounded-xl overflow-hidden relative'>
-                    {heroImage && <Image src={heroImage} alt="Hero preview" fill className="object-cover" sizes="300px" />}
-                  </div>
-                  <div className='flex-1 flex flex-col gap-4'>
-                    <Input placeholder='Hero image URL' value={heroImage} onChange={(e: any) => { setHeroImage(e.target.value); setBannerSaved(false); }} />
-                    <Button onClick={() => setBannerSaved(true)} className='self-start'>
-                      {bannerSaved ? '✓ Saved' : 'Save Image'}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-
-              <div className='bg-white p-6 rounded-2xl border border-blush/30 shadow-sm'>
-                <h4 className='font-heading text-lg mb-4 text-primary'>Product Images</h4>
-                <p className='text-secondary text-sm mb-4'>You can update individual product images from the <button onClick={() => setActiveTab('products')} className='text-gold font-medium hover:underline'>Inventory</button> tab by editing each product.</p>
-                <div className='grid grid-cols-2 md:grid-cols-4 gap-4'>
+              {productsLoading ? <p>Loading products...</p> : (
+                <div className='flex flex-col gap-4'>
                   {products.map(p => (
-                    <div key={p.id} className='relative aspect-square bg-blush/20 rounded-xl overflow-hidden group cursor-pointer' onClick={() => { setActiveTab('products'); handleStartEdit(p); }}>
-                      {p.image && <Image src={p.image} alt={p.name} fill className="object-cover" sizes="150px" />}
-                      <div className='absolute inset-0 bg-primary/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center'>
-                        <span className='text-white text-xs font-medium'>Edit</span>
-                      </div>
-                      <div className='absolute bottom-0 left-0 right-0 bg-primary/70 px-2 py-1'>
-                        <p className='text-white text-xs truncate'>{p.name}</p>
-                      </div>
+                    <div key={p.id} className='bg-white border border-pink-50 p-6 rounded-[16px] shadow-sm hover:shadow-md transition-shadow'>
+                      {editingId === p.id ? (
+                        /* ── Editing Mode ── */
+                        <div className='flex flex-col gap-4'>
+                          <div className='flex flex-col md:flex-row gap-4'>
+                            <Input placeholder='Name' value={editForm.name} onChange={(e: any) => setEditForm({ ...editForm, name: e.target.value })} className="flex-1" />
+                            <Input placeholder='Price' type='number' value={editForm.price} onChange={(e: any) => setEditForm({ ...editForm, price: e.target.value })} className="w-32" />
+                            <Input placeholder='Category' value={editForm.category} onChange={(e: any) => setEditForm({ ...editForm, category: e.target.value })} className="w-48" />
+                          </div>
+                          <div className="flex gap-4 items-center">
+                            <Input placeholder='Image URL' value={editForm.image} onChange={(e: any) => setEditForm({ ...editForm, image: e.target.value })} className="flex-1" />
+                            <span className="text-secondary text-sm">OR</span>
+                            <input type="file" accept="image/*" ref={editFileInputRef} onChange={(e) => setEditImageFile(e.target.files?.[0] || null)} className="text-sm text-secondary file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blush/20 file:text-primary hover:file:bg-blush/30" />
+                          </div>
+                          <textarea
+                            placeholder='Description...'
+                            value={editForm.description}
+                            onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                            className='w-full bg-ivory border border-pink-100 rounded-[12px] px-4 py-3 text-primary placeholder-secondary/50 focus:outline-none focus:border-gold resize-none h-24'
+                          />
+                          <div className='flex gap-3 justify-end'>
+                            <Button variant='secondary' onClick={() => setEditingId(null)} disabled={isSaving}>Cancel</Button>
+                            <Button onClick={() => handleSaveEdit(p.id)} disabled={isSaving}>{isSaving ? 'Saving...' : 'Save'}</Button>
+                          </div>
+                        </div>
+                      ) : (
+                        /* ── View Mode ── */
+                        <div className='flex flex-col md:flex-row justify-between items-start md:items-center gap-4'>
+                          <div className="flex items-center gap-4">
+                            <div className="w-16 h-16 rounded-lg overflow-hidden relative flex-shrink-0 bg-blush/20">
+                              {p.image && <Image src={p.image} alt={p.name} fill className="object-cover" sizes="64px" />}
+                            </div>
+                            <div>
+                              <p className='font-bold text-lg text-primary'>{p.name}</p>
+                              <p className='text-secondary text-sm'>₹{p.price} | {p.category}</p>
+                              {p.description && <p className='text-secondary/70 text-xs mt-1 max-w-md truncate'>{p.description}</p>}
+                            </div>
+                          </div>
+                          <div className='flex gap-3'>
+                            <button onClick={() => handleStartEdit(p)} className='text-gold hover:text-gold/80 transition-colors bg-gold/10 px-4 py-2 rounded-lg text-sm font-medium'>Edit</button>
+                            <button onClick={() => deleteProduct(p.id)} className='text-red-400 hover:text-red-600 transition-colors bg-red-50 px-4 py-2 rounded-lg text-sm font-medium'>Delete</button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
-              </div>
-            </div>
-          )}
-
-          {/* ─── Customers ─── */}
-          {activeTab === 'customers' && (
-            <div>
-              <h3 className='font-heading text-2xl mb-6'>Customers</h3>
-              <p className='text-secondary'>Customer list will appear here.</p>
-            </div>
-          )}
-
-          {/* ─── Settings ─── */}
-          {activeTab === 'settings' && (
-            <div>
-              <h3 className='font-heading text-2xl mb-6'>Store Settings</h3>
-              <div className='bg-white p-8 rounded-2xl border border-blush/30'>
-                <p className='text-secondary'>Store configuration options.</p>
-              </div>
+              )}
             </div>
           )}
         </div>

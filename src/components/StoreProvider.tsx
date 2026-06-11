@@ -6,6 +6,11 @@ export default function StoreProvider({ children }: { children: React.ReactNode 
 
   useEffect(() => {
     setHydrated(true);
+    // Initialize Supabase data
+    import('@/lib/store').then(({ useAuthStore, useProductStore }) => {
+      useAuthStore.getState().initialize();
+      useProductStore.getState().fetchProducts();
+    });
   }, []);
 
   if (!hydrated) {
